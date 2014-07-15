@@ -33,6 +33,9 @@ module Bugsnag
     attr_accessor :configuration
 
     class << self
+      @@threads = []
+      at_exit{ @@threads.map(&:join) }
+
       def deliver_exception_payload(endpoint, payload)
         begin
           payload_string = Bugsnag::Helpers.dump_json(payload)
@@ -44,8 +47,8 @@ module Bugsnag
             payload_string = Bugsnag::Helpers.dump_json(payload)
           end
 
-          response = post(endpoint, {:body => payload_string})
-          Bugsnag.debug("Notification to #{endpoint} finished, response was #{response.code}, payload was #{payload_string}")
+          do_post(endpoint, payload_string)
+
         rescue StandardError => e
           # KLUDGE: Since we don't re-raise http exceptions, this breaks rspec
           raise if e.class.to_s == "RSpec::Expectations::ExpectationNotMetError"
@@ -53,6 +56,22 @@ module Bugsnag
           Bugsnag.warn("Notification to #{endpoint} failed, #{e.inspect}")
           Bugsnag.warn(e.backtrace)
         end
+
+      end
+
+      def do_post(endpoint, payload_string)
+        t = Thread.new do
+          begin
+            response = post(endpoint, {:body => payload_string})
+            Bugsnag.debug("Notification to #{endpoint} finished, response was #{response.code}, payload was #{payload_string}")
+          rescue StandardError => e
+            Bugsnag.warn("Notification to #{endpoint} failed, #{e.inspect}")
+            Bugsnag.warn(e.backtrace)
+          ensure
+            @@threads.delete t
+          end
+        end
+        @@threads << t
       end
     end
 
